@@ -1,0 +1,15 @@
+{
+    "SEED": 1,
+    "dataset": "Omniglot",
+    "meta_lr": 1e-3,
+    "num_episodes": 10000,
+    "num_classes": 5,
+    "num_samples": 5,
+    "num_query": 10,
+    "num_steps": 100,
+    "num_inner_tasks": 32,
+    "num_train_updates": 1,
+    "num_eval_updates": 1,
+    "save_summary_steps": 100,
+    "num_workers": 1
+}
