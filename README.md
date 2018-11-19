@@ -1,6 +1,7 @@
 # Meta-SGD in pytorch
 
 The only difference compared to MAML is to parametrize task learning rate in vector form when meta-training.
+As the authors said, we could see fast convergence and higher performance than naive MAML.
 For our version of Meta-SGD, we did not use other tricks to improve performances such as regularization or 1-shot meta-training.
 Our pytorch version of MAML is at https://github.com/jik0730/MAML-in-pytorch.
 
