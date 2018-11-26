@@ -21,7 +21,7 @@ The reported performance are refered to the ones in Meta-SGD paper.
 |      MAML     |     48.7%    |     63.1%    |     16.5%     |     19.3%     |
 |   Ours MAML   |     48.4%    |     64.8%    |       -       |       -       |
 |    Meta-SGD   |     50.5%    |     64.0%    |     17.6%     |     28.9%     |
-| Ours Meta-SGD |              |              |               |               |
+| Ours Meta-SGD |     49.1%    |     66.0%    |     17.0%     |     29.9%     |
 
 ## TODO
 - TBD
