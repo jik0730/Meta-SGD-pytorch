@@ -107,6 +107,7 @@ def train_single_task(model, loss_fn, dataloaders, params):
 
 def train_and_evaluate(model,
                        meta_train_classes,
+                       meta_val_classes,
                        meta_test_classes,
                        task_type,
                        meta_optimizer,
@@ -121,7 +122,8 @@ def train_and_evaluate(model,
     Args:
         model: (MetaLearner) a meta-learner for MAML algorithm
         meta_train_classes: (list) the classes for meta-training
-        meta_train_classes: (list) the classes for meta-testing
+        meta_val_classes: (list) the classes for meta-validating
+        meta_test_classes: (list) the classes for meta-testing
         task_type: (subclass of FewShotTask) a type for generating tasks
         meta_optimizer: (torch.optim) an meta-optimizer for MetaLearner
         loss_fn: a loss function
@@ -131,7 +133,6 @@ def train_and_evaluate(model,
         model_dir: (string) directory containing config, weights and log
         restore_file: (string) optional- name of file to restore from
                       (without its extension .pth.tar)
-    TODO Validation classes
     """
     # reload weights from restore_file if specified
     if restore_file is not None:
@@ -147,13 +148,15 @@ def train_and_evaluate(model,
     num_inner_tasks = params.num_inner_tasks
     meta_lr = params.meta_lr
 
-    # TODO validation accuracy
-    best_test_acc = 0.0
+    # validation loss
+    best_val_loss = float('inf')
 
     # For plotting to see summerized training procedure
     plot_history = {
         'train_loss': [],
         'train_acc': [],
+        'val_loss': [],
+        'val_acc': [],
         'test_loss': [],
         'test_acc': []
     }
@@ -209,35 +212,44 @@ def train_and_evaluate(model,
             if (episode + 1) % params.save_summary_steps == 0:
                 train_metrics = evaluate(model, loss_fn, meta_train_classes,
                                          task_type, metrics, params, 'train')
+                val_metrics = evaluate(model, loss_fn, meta_val_classes,
+                                       task_type, metrics, params, 'val')
                 test_metrics = evaluate(model, loss_fn, meta_test_classes,
                                         task_type, metrics, params, 'test')
 
                 train_loss = train_metrics['loss']
+                val_loss = val_metrics['loss']
                 test_loss = test_metrics['loss']
                 train_acc = train_metrics['accuracy']
+                val_acc = val_metrics['accuracy']
                 test_acc = test_metrics['accuracy']
 
-                is_best = test_acc >= best_test_acc
+                is_best = val_loss <= best_val_loss
 
                 # Save weights
-                utils.save_checkpoint({
-                    'episode': episode + 1,
-                    'state_dict': model.state_dict(),
-                    'optim_dict': meta_optimizer.state_dict()
-                },
-                                      is_best=is_best,
-                                      checkpoint=model_dir)
+                utils.save_checkpoint(
+                    {
+                        'episode': episode + 1,
+                        'state_dict': model.state_dict(),
+                        'optim_dict': meta_optimizer.state_dict(),
+                        'task_lr_dict': model.task_lr
+                    },
+                    is_best=is_best,
+                    checkpoint=model_dir)
 
                 # If best_test, best_save_path
                 if is_best:
                     logging.info("- Found new best accuracy")
-                    best_test_acc = test_acc
+                    best_val_loss = val_loss
 
                     # Save best test metrics in a json file in the model directory
                     best_train_json_path = os.path.join(
                         model_dir, "metrics_train_best_weights.json")
                     utils.save_dict_to_json(train_metrics,
                                             best_train_json_path)
+                    best_val_json_path = os.path.join(
+                        model_dir, "metrics_val_best_weights.json")
+                    utils.save_dict_to_json(val_metrics, best_val_json_path)
                     best_test_json_path = os.path.join(
                         model_dir, "metrics_test_best_weights.json")
                     utils.save_dict_to_json(test_metrics, best_test_json_path)
@@ -246,14 +258,20 @@ def train_and_evaluate(model,
                 last_train_json_path = os.path.join(
                     model_dir, "metrics_train_last_weights.json")
                 utils.save_dict_to_json(train_metrics, last_train_json_path)
+                last_val_json_path = os.path.join(
+                    model_dir, "metrics_val_last_weights.json")
+                utils.save_dict_to_json(val_metrics, last_val_json_path)
                 last_test_json_path = os.path.join(
                     model_dir, "metrics_test_last_weights.json")
                 utils.save_dict_to_json(test_metrics, last_test_json_path)
 
                 plot_history['train_loss'].append(train_loss)
                 plot_history['train_acc'].append(train_acc)
+                plot_history['val_loss'].append(val_loss)
+                plot_history['val_acc'].append(val_acc)
                 plot_history['test_loss'].append(test_loss)
                 plot_history['test_acc'].append(test_acc)
+                utils.plot_training_results(args.model_dir, plot_history)
 
                 t.set_postfix(
                     tr_acc='{:05.3f}'.format(train_acc),
@@ -263,8 +281,6 @@ def train_and_evaluate(model,
                 print('\n')
 
             t.update()
-
-    utils.plot_training_results(args.model_dir, plot_history)
 
 
 if __name__ == '__main__':
@@ -293,14 +309,14 @@ if __name__ == '__main__':
     # Split meta-training and meta-testing characters
     if 'Omniglot' in args.data_dir and params.dataset == 'Omniglot':
         params.in_channels = 1
-        meta_train_classes, meta_test_classes = split_omniglot_characters(
-            args.data_dir, SEED)
+        (meta_train_classes, meta_val_classes,
+         meta_test_classes) = split_omniglot_characters(args.data_dir, SEED)
         task_type = OmniglotTask
     elif ('miniImageNet' in args.data_dir or
           'tieredImageNet' in args.data_dir) and params.dataset == 'ImageNet':
         params.in_channels = 3
-        meta_train_classes, meta_test_classes = load_imagenet_images(
-            args.data_dir)
+        (meta_train_classes, meta_val_classes,
+         meta_test_classes) = load_imagenet_images(args.data_dir)
         task_type = ImageNetTask
     else:
         raise ValueError("I don't know your dataset")
@@ -321,6 +337,7 @@ if __name__ == '__main__':
 
     # Train the model
     logging.info("Starting training for {} episode(s)".format(num_episodes))
-    train_and_evaluate(model, meta_train_classes, meta_test_classes, task_type,
-                       meta_optimizer, loss_fn, model_metrics, params,
-                       args.model_dir, args.restore_file)
+    train_and_evaluate(model, meta_train_classes, meta_val_classes,
+                       meta_test_classes, task_type, meta_optimizer, loss_fn,
+                       model_metrics, params, args.model_dir,
+                       args.restore_file)

@@ -135,6 +135,7 @@ def load_checkpoint(checkpoint, model, optimizer=None):
         raise ("File doesn't exist {}".format(checkpoint))
     checkpoint = torch.load(checkpoint)
     model.load_state_dict(checkpoint['state_dict'])
+    model.task_lr = checkpoint['task_lr_dict']
 
     if optimizer:
         optimizer.load_state_dict(checkpoint['optim_dict'])
@@ -151,24 +152,30 @@ def plot_training_results(model_dir, plot_history):
                       we want to plot
     """
     tr_losses = plot_history['train_loss']
+    val_losses = plot_history['val_loss']
     te_losses = plot_history['test_loss']
     tr_accs = plot_history['train_acc']
+    val_accs = plot_history['val_acc']
     te_accs = plot_history['test_acc']
 
     plt.figure(0)
     plt.plot(list(range(len(tr_losses))), tr_losses, label='train_loss')
+    plt.plot(list(range(len(val_losses))), val_losses, label='val_loss')
     plt.plot(list(range(len(te_losses))), te_losses, label='test_loss')
     plt.title('Loss trend')
     plt.xlabel('episode')
     plt.ylabel('ce loss')
     plt.legend()
     plt.savefig(os.path.join(model_dir, 'loss_trend'), dpi=200)
+    plt.clf()
 
     plt.figure(1)
     plt.plot(list(range(len(tr_accs))), tr_accs, label='train_acc')
+    plt.plot(list(range(len(val_accs))), val_accs, label='val_acc')
     plt.plot(list(range(len(te_accs))), te_accs, label='test_acc')
     plt.title('Accuracy trend')
     plt.xlabel('episode')
     plt.ylabel('accuracy')
     plt.legend()
     plt.savefig(os.path.join(model_dir, 'accuracy_trend'), dpi=200)
+    plt.clf()

@@ -10,7 +10,7 @@ import torchvision.transforms as transforms
 
 # Define a training image loader for Omniglot that specifies transforms on images.
 train_transformer_Omniglot = transforms.Compose([
-    transforms.Resize((28, 28)),  # TODO What if already resizing? SPEED UP?
+    transforms.Resize((28, 28)),
     # transforms.RandomRotation(90),  # NOTE DO or DO NOT? need to be consistent
     transforms.ToTensor()
 ])
@@ -44,23 +44,17 @@ def split_omniglot_characters(data_dir, SEED):
     random.seed(SEED)
     random.shuffle(character_folders)
 
-    # TODO consider validation set
-    # test_ratio = 0.2  # against total data
-    # val_ratio = 0.2  # against train data
-    # num_total = len(character_folders)
-    # num_test = int(num_total * test_ratio)
-    # num_val = int((num_total - num_test) * val_ratio)
-    # num_train = num_total - num_test - num_val
+    test_ratio = 0.2  # against total data
+    val_ratio = 0.2  # against train data
+    num_total = len(character_folders)
+    num_test = int(num_total * test_ratio)
+    num_val = int((num_total - num_test) * val_ratio)
+    num_train = num_total - num_test - num_val
 
-    # train_chars = character_folders[:num_train]
-    # val_chars = character_folders[num_train:num_train + num_val]
-    # test_chars = character_folders[-num_test:]
-    # return train_chars, val_chars, test_chars
-
-    num_train = 1200
     train_chars = character_folders[:num_train]
-    test_chars = character_folders[num_train:]
-    return train_chars, test_chars
+    val_chars = character_folders[num_train:num_train + num_val]
+    test_chars = character_folders[-num_test:]
+    return train_chars, val_chars, test_chars
 
 
 def load_imagenet_images(data_dir):
@@ -68,7 +62,6 @@ def load_imagenet_images(data_dir):
     The datasets for miniImageNet and tieredImageNet are already splited into
     train/val/test. The method returns the lists of paths of classes as the 
     method for omniglot does.
-    TODO validation
     """
     if not os.path.exists(data_dir):
         raise Exception("ImageNet data folder does not exist.")
@@ -76,14 +69,14 @@ def load_imagenet_images(data_dir):
     train_classes = [os.path.join(data_dir, 'train', family)\
                     for family in os.listdir(os.path.join(data_dir, 'train')) \
                     if os.path.isdir((os.path.join(data_dir, 'train', family)))]
-    train_classes += [os.path.join(data_dir, 'val', family)\
+    val_classes = [os.path.join(data_dir, 'val', family)\
                      for family in os.listdir(os.path.join(data_dir, 'val')) \
-                     if os.path.isdir((os.path.join(data_dir, family)))]
+                     if os.path.isdir((os.path.join(data_dir, 'val', family)))]
     test_classes = [os.path.join(data_dir, 'test', family)\
                    for family in os.listdir(os.path.join(data_dir, 'test')) \
                    if os.path.isdir((os.path.join(data_dir, 'test', family)))]
 
-    return train_classes, test_classes
+    return train_classes, val_classes, test_classes
 
 
 class Task(object):
@@ -199,8 +192,8 @@ def fetch_dataloaders(types, task):
 
     Args:
         types: (list) has one or more of 'train', 'val', 'test' 
-               depending on which data is required # TODO 'val'
-        task: (OmniglotTask or TODO ImageNet) a single task for few-shot learning
+               depending on which data is required
+        task: (OmniglotTask or ImageNet) a single task for few-shot learning
         TODO params: (Params) hyperparameters
     Returns:
         dataloaders: (dict) contains the DataLoader object for each type in types
@@ -213,7 +206,7 @@ def fetch_dataloaders(types, task):
         eval_transformer = eval_transformer_ImageNet
 
     dataloaders = {}
-    for split in ['train', 'val', 'test', 'meta']:
+    for split in ['train', 'test', 'meta']:
         if split in types:
             # use the train_transformer if training data,
             # else use eval_transformer without random flip
@@ -242,7 +235,6 @@ def fetch_dataloaders(types, task):
                     batch_size=len(meta_filenames),  # full-batch in episode
                     shuffle=True)  # TODO args: num_workers, pin_memory
             else:
-                # TODO
                 raise NotImplementedError()
             dataloaders[split] = dl
 
