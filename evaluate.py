@@ -49,14 +49,6 @@ def evaluate(model, loss_fn, meta_classes, task_type, metrics, params, split):
                         'val' if evaluate on 'meta-validating' and
                         'test' if evaluate on 'meta-testing'
     """
-    # params information
-    SEED = params.SEED
-    num_classes = params.num_classes
-    num_samples = params.num_samples
-    num_query = params.num_query
-    num_steps = params.num_steps
-    num_eval_updates = params.num_eval_updates
-
     # set model to evaluation mode
     # NOTE eval() is not needed since everytime task is varying and batchnorm
     # should compute statistics within the task.
@@ -66,10 +58,10 @@ def evaluate(model, loss_fn, meta_classes, task_type, metrics, params, split):
     summ = []
 
     # compute metrics over the dataset
-    for episode in range(num_steps):
+    for episode in range(params.num_steps):
         # Make a single task
-        # Make dataloaders to load support set and query set
-        task = task_type(meta_classes, num_classes, num_samples, num_query)
+        task = task_type(meta_classes, params.num_classes, params.num_samples,
+                         params.num_query)
         dataloaders = fetch_dataloaders(['train', 'test'], task)
         dl_sup = dataloaders['train']
         dl_que = dataloaders['test']
@@ -87,20 +79,19 @@ def evaluate(model, loss_fn, meta_classes, task_type, metrics, params, split):
                 if p.grad is not None:
                     p.grad.zero_()
 
-        # NOTE In Meta-SGD paper, num_eval_updates=1 is enough
-        for _ in range(num_eval_updates):
-            Y_sup_hat = model(X_sup)
-            loss = loss_fn(Y_sup_hat, Y_sup)
-            zero_grad(model.parameters())
-            grads = torch.autograd.grad(loss, model.parameters())
-            # step() manually
-            adapted_state_dict = model.cloned_state_dict()
-            adapted_params = OrderedDict()
-            for (key, val), grad in zip(model.named_parameters(), grads):
-                # NOTE Here Meta-SGD is different from naive MAML
-                task_lr = model.task_lr[key]
-                adapted_params[key] = val - task_lr * grad
-                adapted_state_dict[key] = adapted_params[key]
+        # Single inner gradient update
+        Y_sup_hat = model(X_sup)
+        loss = loss_fn(Y_sup_hat, Y_sup)
+        zero_grad(model.parameters())
+        grads = torch.autograd.grad(loss, model.parameters())
+        # step() manually
+        adapted_state_dict = model.cloned_state_dict()
+        adapted_params = OrderedDict()
+        for (key, val), grad in zip(model.named_parameters(), grads):
+            # NOTE Here Meta-SGD is different from naive MAML
+            task_lr = model.task_lr[key]
+            adapted_params[key] = val - task_lr * grad
+            adapted_state_dict[key] = adapted_params[key]
         Y_que_hat = model(X_que, adapted_state_dict)
         loss = loss_fn(Y_que_hat, Y_que)  # NOTE !!!!!!!!
 
@@ -139,21 +130,20 @@ if __name__ == '__main__':
         json_path), "No json configuration file found at {}".format(json_path)
     params = utils.Params(json_path)
 
-    SEED = params.SEED
-
     # use GPU if available
     params.cuda = torch.cuda.is_available()  # use GPU is available
 
     # Set the random seed for reproducible experiments
-    torch.manual_seed(SEED)
-    if params.cuda: torch.cuda.manual_seed(SEED)
+    torch.manual_seed(params.SEED)
+    if params.cuda: torch.cuda.manual_seed(params.SEED)
 
     # Split meta-training and meta-testing characters
     if 'Omniglot' in args.data_dir and params.dataset == 'Omniglot':
         params.in_channels = 1
         params.in_features_fc = 1
         (meta_train_classes, meta_val_classes,
-         meta_test_classes) = split_omniglot_characters(args.data_dir, SEED)
+         meta_test_classes) = split_omniglot_characters(
+             args.data_dir, params.SEED)
         task_type = OmniglotTask
     elif ('miniImageNet' in args.data_dir or
           'tieredImageNet' in args.data_dir) and params.dataset == 'ImageNet':
@@ -180,13 +170,6 @@ if __name__ == '__main__':
     # Reload weights from the saved file
     utils.load_checkpoint(
         os.path.join(args.model_dir, args.restore_file + '.pth.tar'), model)
-
-    # NOTE Why task_lr < 0?
-    # for key, val in model.task_lr.items():
-    #     model.task_lr[key] = val * (val >= 0).to(val.dtype)
-    #     print(model.task_lr[key])
-    # print(model.task_lr)
-    # exit()
 
     # Evaluate
     test_metrics = evaluate(model, loss_fn, meta_test_classes, task_type,

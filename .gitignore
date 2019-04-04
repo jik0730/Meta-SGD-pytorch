@@ -3,6 +3,7 @@ data/*
 data
 .vscode*
 *.pyc
+run.sh
 
 experiments/*
 !experiments/base_model

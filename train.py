@@ -47,16 +47,12 @@ def train_single_task(model, loss_fn, dataloaders, params):
                      support set and query set
         params: (Params) hyperparameters
     """
-    # extract params
-    num_train_updates = params.num_train_updates
-
     # set model to training mode
     model.train()
 
-    # support set and query set for a single few-shot task
+    # support set for a single few-shot task
     dl_sup = dataloaders['train']
     X_sup, Y_sup = dl_sup.__iter__().next()
-    X_sup2, Y_sup2 = dl_sup.__iter__().next()
 
     # move to GPU if available
     if params.cuda:
@@ -73,8 +69,6 @@ def train_single_task(model, loss_fn, dataloaders, params):
                 p.grad.zero_()
 
     # NOTE if we want approx-MAML, change create_graph=True to False
-    # optimizer.zero_grad()
-    # loss.backward(create_graph=True)
     zero_grad(model.parameters())
     grads = torch.autograd.grad(loss, model.parameters(), create_graph=True)
 
@@ -84,23 +78,10 @@ def train_single_task(model, loss_fn, dataloaders, params):
     adapted_params = OrderedDict()
     for (key, val), grad in zip(model.named_parameters(), grads):
         # NOTE Here Meta-SGD is different from naive MAML
+        # Also we only need single update of inner gradient update
         task_lr = model.task_lr[key]
         adapted_params[key] = val - task_lr * grad
         adapted_state_dict[key] = adapted_params[key]
-
-    # NOTE In Meta-SGD paper, num_train_updates=1 is enough
-    for _ in range(1, num_train_updates):
-        Y_sup_hat = model(X_sup, adapted_state_dict)
-        loss = loss_fn(Y_sup_hat, Y_sup)
-        zero_grad(adapted_params.values())
-        # optimizer.zero_grad()
-        # loss.backward(create_graph=True)
-        grads = torch.autograd.grad(
-            loss, adapted_params.values(), create_graph=True)
-        for (key, val), grad in zip(adapted_params.items(), grads):
-            task_lr = model.task_lr[key]
-            adapted_params[key] = val - task_lr * grad
-            adapted_state_dict[key] = adapted_params[key]
 
     return adapted_state_dict
 
@@ -141,15 +122,8 @@ def train_and_evaluate(model,
         logging.info("Restoring parameters from {}".format(restore_path))
         utils.load_checkpoint(restore_path, model, meta_optimizer)
 
-    # params information
-    num_classes = params.num_classes
-    num_samples = params.num_samples
-    num_query = params.num_query
-    num_inner_tasks = params.num_inner_tasks
-    meta_lr = params.meta_lr
-
     # validation loss
-    best_val_loss = float('inf')
+    best_val_acc = -float('inf')
 
     # For plotting to see summerized training procedure
     plot_history = {
@@ -170,11 +144,10 @@ def train_and_evaluate(model,
             # Run inner loops to get adapted parameters (theta_t`)
             adapted_state_dicts = []
             dataloaders_list = []
-            for n_task in range(num_inner_tasks):
-                task = task_type(meta_train_classes, num_classes, num_samples,
-                                 num_query)
-                dataloaders = fetch_dataloaders(['train', 'test', 'meta'],
-                                                task)
+            for n_task in range(params.num_inner_tasks):
+                task = task_type(meta_train_classes, params.num_classes,
+                                 params.num_samples, params.num_query)
+                dataloaders = fetch_dataloaders(['train', 'test'], task)
                 # Perform a gradient descent to meta-learner on the task
                 a_dict = train_single_task(model, loss_fn, dataloaders, params)
                 # Store adapted parameters
@@ -186,19 +159,18 @@ def train_and_evaluate(model,
             # Compute losses with adapted parameters along with corresponding tasks
             # Updated the parameters of meta-learner using sum of the losses
             meta_loss = 0
-            for n_task in range(num_inner_tasks):
+            for n_task in range(params.num_inner_tasks):
                 dataloaders = dataloaders_list[n_task]
-                dl_meta = dataloaders['meta']
+                dl_meta = dataloaders['test']  # query set
                 X_meta, Y_meta = dl_meta.__iter__().next()
                 if params.cuda:
                     X_meta, Y_meta = X_meta.cuda(async=True), Y_meta.cuda(
                         async=True)
-
                 a_dict = adapted_state_dicts[n_task]
                 Y_meta_hat = model(X_meta, a_dict)
                 loss_t = loss_fn(Y_meta_hat, Y_meta)
                 meta_loss += loss_t
-            meta_loss /= float(num_inner_tasks)
+            meta_loss /= float(params.num_inner_tasks)
             # print(meta_loss.item())
 
             # Meta-update using meta_optimizer
@@ -224,7 +196,7 @@ def train_and_evaluate(model,
                 val_acc = val_metrics['accuracy']
                 test_acc = test_metrics['accuracy']
 
-                is_best = val_loss <= best_val_loss
+                is_best = val_acc >= best_val_acc
 
                 # Save weights
                 utils.save_checkpoint(
@@ -240,7 +212,7 @@ def train_and_evaluate(model,
                 # If best_test, best_save_path
                 if is_best:
                     logging.info("- Found new best accuracy")
-                    best_val_loss = val_loss
+                    best_val_acc = val_acc
 
                     # Save best test metrics in a json file in the model directory
                     best_train_json_path = os.path.join(
@@ -291,16 +263,12 @@ if __name__ == '__main__':
         json_path), "No json configuration file found at {}".format(json_path)
     params = utils.Params(json_path)
 
-    SEED = params.SEED
-    meta_lr = params.meta_lr
-    num_episodes = params.num_episodes
-
     # Use GPU if available
     params.cuda = torch.cuda.is_available()
 
     # Set the random seed for reproducible experiments
-    torch.manual_seed(SEED)
-    if params.cuda: torch.cuda.manual_seed(SEED)
+    torch.manual_seed(params.SEED)
+    if params.cuda: torch.cuda.manual_seed(params.SEED)
 
     # Set the logger
     utils.set_logger(os.path.join(args.model_dir, 'train.log'))
@@ -310,7 +278,8 @@ if __name__ == '__main__':
     if 'Omniglot' in args.data_dir and params.dataset == 'Omniglot':
         params.in_channels = 1
         (meta_train_classes, meta_val_classes,
-         meta_test_classes) = split_omniglot_characters(args.data_dir, SEED)
+         meta_test_classes) = split_omniglot_characters(
+             args.data_dir, params.SEED)
         task_type = OmniglotTask
     elif ('miniImageNet' in args.data_dir or
           'tieredImageNet' in args.data_dir) and params.dataset == 'ImageNet':
@@ -329,14 +298,15 @@ if __name__ == '__main__':
     # NOTE we need to define task_lr after defining model
     model.define_task_lr_params()
     model_params = list(model.parameters()) + list(model.task_lr.values())
-    meta_optimizer = torch.optim.Adam(model_params, lr=meta_lr)
+    meta_optimizer = torch.optim.Adam(model_params, lr=params.meta_lr)
 
     # fetch loss function and metrics
     loss_fn = nn.NLLLoss()
     model_metrics = metrics
 
     # Train the model
-    logging.info("Starting training for {} episode(s)".format(num_episodes))
+    logging.info("Starting training for {} episode(s)".format(
+        params.num_episodes))
     train_and_evaluate(model, meta_train_classes, meta_val_classes,
                        meta_test_classes, task_type, meta_optimizer, loss_fn,
                        model_metrics, params, args.model_dir,
