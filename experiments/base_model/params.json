@@ -1,13 +1,14 @@
 {
     "SEED": 1,
-    "dataset": "Omniglot",
+    "dataset": "ImageNet",
     "meta_lr": 1e-3,
-    "num_episodes": 50000,
+    "l2_penalty": 1e-3,
+    "num_episodes": 60000,
     "num_classes": 5,
     "num_samples": 1,
-    "num_query": 10,
-    "num_steps": 100,
-    "num_inner_tasks": 8,
-    "save_summary_steps": 100,
+    "num_query": 15,
+    "num_steps": 600,
+    "num_inner_tasks": 4,
+    "save_summary_steps": 500,
     "num_workers": 1
 }
